@@ -1,0 +1,321 @@
+---
+title: "Q1"
+author: "Gerald"
+date: "2/24/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/geral/Repository/Coursework/Dataset/")
+```
+
+We first ensure our working directory is correct, and launch the libraries required.
+```{r setting-wd}
+getwd()
+setwd("C:/Users/geral/Repository/Coursework/Dataset")
+```
+
+```{r library}
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+library(ggthemes)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(RColorBrewer)
+```
+
+
+```{r}
+display.brewer.all(colorblindFriendly = TRUE)
+colours<-brewer.pal(n = 12, name = "Paired")
+```
+
+Connecting to DB Browser
+```{r}
+conn <- dbConnect(RSQLite::SQLite(), "dataset.db")
+```
+
+Extracting our data from 2005 to 2006 and uploading it in the global environment. 
+```{r}
+Y05_06 <- dbGetQuery(conn, "
+                SELECT *
+                FROM 'Y05_06'")
+str(Y05_06)
+summary(Y05_06)
+head(Y05_06, n = 10)
+
+Y05_06_narm <- na.omit(Y05_06)
+Y05_06_narm
+```
+```{r}
+# Creating Date and Day
+Y05_06_narm$Date<-as.Date(with(Y05_06_narm, 
+                               paste(Year, Month, DayofMonth, sep="-")),
+                          "%Y-%m-%d")
+Y05_06_narm$Day <- weekdays(Y05_06_narm$Date) 
+
+Y05_06_narm <- Y05_06_narm %>% 
+  filter(ArrTime<=2359,DepTime<=2359)
+Y05_06_narm
+# observations : 13,979,513
+```
+```{r}
+overview <- Y05_06_narm %>% 
+  group_by(Year) %>% 
+  summarise(flights = n(),
+            avg_arr_delay = mean(ArrDelay),
+            max_arr_delay = max(ArrDelay),
+            min_arr_delay = min(ArrDelay))
+overview
+# write.csv(overview,'overview.csv')
+```
+
+# 1. When is the best time of day, day of the week, and time of year to fly to minimise delays?
+
+## Best Time of the Day
+For best time of the day, we will be creating a barplot We separate the day into 24 periods, each period is 1 hour. Moving forward, We shall call periods as time_bin or time bin.
+### Setting up the dataset 
+```{r test-dataset}
+test <- Y05_06_narm %>% 
+  select(TailNum, ArrTime, ArrDelay, Cancelled, Diverted, Dest) %>% 
+  filter(Cancelled == 0, Diverted == 0) %>% 
+  arrange(ArrTime)
+```
+
+We create a function to categorise each observation into a Time bin. 
+```{r}
+time <- function(x){
+  if (x < 100){
+    return('0000-0100')
+  }else if (x >= 100 & x < 200){
+    return('0100-0200')
+  }else if (x >= 200 & x < 300){
+    return('0200-0300')
+  }else if (x >= 300 & x < 400){
+    return('0300-0400')
+  }else if (x >= 400 & x < 500){
+    return('0400-0500')
+  }else if (x >= 500 & x < 600){
+    return('0500-0600')
+  }else if (x >= 600 & x < 700){
+    return('0600-0700')
+  }else if (x >= 700 & x < 800){
+    return('0700-0800')
+  }else if (x >= 800 & x < 900){
+    return('0800-0900')
+  }else if (x >= 900 & x < 1000){
+    return('0900-1000')
+  }else if (x >= 1000 & x < 1100){
+    return('1000-1100')
+  }else if (x >= 1100 & x < 1200){
+    return('1100-1200')
+  }else if (x >= 1200 & x < 1300){
+    return('1200-1300')
+  }else if (x >= 1300 & x < 1400){
+    return('1300-1400')
+  }else if (x >= 1400 & x < 1500){
+    return('1400-1500')
+  }else if (x >= 1500 & x < 1600){
+    return('1500-1600')
+  }else if (x >= 1600 & x < 1700){
+    return('1600-1700')
+  }else if (x >= 1700 & x < 1800){
+    return('1700-1800')
+  }else if (x >= 1800 & x < 1900){
+    return('1800-1900')
+  }else if (x >= 1900 & x < 2000){
+    return('1900-2000')
+  }else if (x >= 2000 & x < 2100){
+    return('2000-2100')
+  }else if (x >= 2100 & x < 2200){
+    return('2100-2200')
+  }else if (x >= 2200 & x < 2300){
+    return('2200-2300')
+  }else if (x >= 2300 & x < 2400){
+    return('2300-2359')
+  }else{
+    return(NA)
+  }
+}
+```
+
+```{r}
+test$Time_Bin <- sapply(test$ArrTime, FUN = time)
+test
+#observations : 13,979,513
+```
+Summarising our data for the best time of the day.
+```{r}
+BTOTD <- test %>% 
+  group_by(Time_Bin) %>% 
+  summarise(Distinct_aircraft = length(unique(TailNum)),
+            No._of_flights = n(),
+            Avg_Delay = round(mean(ArrDelay),2))
+BTOTD
+# write.csv(BTOTD,'BTOTD19.csv')
+```
+
+4) Best Time of the day plot 
+
+```{r}
+BTOTD_plot <- ggplot(BTOTD) + 
+  geom_bar(aes(x = Time_Bin, y = Avg_Delay), 
+           stat = 'identity', fill = colours[2], color = 'black') +
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(title = "Average Arrival Delay (Intra Day)", x = " Time Bin", 
+       y = " Average Delay (Mins)")
+BTOTD_plot
+```
+
+## Best Day of the Week
+Solving the second part of the question: "Best day of the week to travel". The following codes gives us the average departure delays. Currently Days 2,6 have the lowest departure delay, where 2 is tues & 6 is sat
+
+```{r}
+BDoWeek <- Y05_06_narm %>% 
+  select(DayOfWeek, Day, TailNum, ArrDelay) %>% 
+  group_by(DayOfWeek, Day) %>% 
+  summarise(No_of_Flights = length(TailNum),
+            Average_Delay = round(mean(ArrDelay, na.rm = TRUE),2)) 
+
+BDoWeek
+#Best day of the week 
+# write.csv(BDoWeek, 'BDOW_180222.csv')
+```
+
+## Creating our plot
+Creating a new column with the name for the days
+```{r}
+Best_day_of_the_Week <- Y05_06_narm %>%
+  select(Day, DayOfWeek, ArrDelay, Cancelled, Diverted) 
+Best_day_of_the_Week
+```
+
+```{r}
+Best_day_of_the_Week2 <- Best_day_of_the_Week %>% 
+  group_by(DayOfWeek, Day) %>%
+  filter(Cancelled == 0, Diverted == 0) %>%   
+  summarize(Max_Delay = max(ArrDelay, na.rm = TRUE),
+            Min_Delay = min(ArrDelay, na.rm = TRUE),
+            Avg_Delay = mean(ArrDelay, na.rm = TRUE),
+            Q1 = quantile(ArrDelay, 0.25, na.rm = TRUE),
+            Q2 = quantile(ArrDelay, 0.5,na.rm = TRUE),
+            Q3 = quantile(ArrDelay, 0.75, na.rm = TRUE)) %>% 
+  arrange(DayOfWeek)
+Best_day_of_the_Week2
+```
+
+```{r}
+#Best_day_of_the_Week2$DayOfWeek <- as.factor(Best_day_of_the_Week2$DayOfWeek)
+str(Best_day_of_the_Week2)
+
+#Best_day_of_the_Week2
+```
+
+```{r}
+BDOTW_plot <- ggplot(Best_day_of_the_Week2) + 
+  geom_bar(aes(x = DayOfWeek, y = Avg_Delay), 
+           stat = 'identity', fill = colours[2], color = 'black') +
+  theme_classic() + 
+  labs(title = "Average Arrival Delay (Day)", x = "Day", 
+       y = " Average Delay (Mins)") + 
+  geom_text(aes(x = DayOfWeek, y = Avg_Delay, label = round(Avg_Delay,2)),
+            vjust = -0.5) +
+  scale_x_discrete(name = 'Day', limits = Best_day_of_the_Week2$Day)
+
+BDOTW_plot
+```
+
+## Best Time of the Year
+Solving the last part of the question: "Best time of the year to travel" 
+The following codes gives us the average arrival delays. Currently Months 4,5,9 have the lowest departure delay. i.e Apr, May, Sep
+
+```{r}
+BToYear <- Y05_06_narm %>%
+  mutate(Month2 = recode(Month, 
+                         '1'='Jan',
+                         '2'='Feb',
+                         '3'='Mar',
+                         '4'='Apr',
+                         '5'='May',
+                         '6'='Jun',
+                         '7'='Jul',
+                         '8'='Aug',
+                         '9'='Sep',
+                         '10'='Oct',
+                         '11'='Nov',
+                         '12'='Dec')) 
+  
+BToYear <- BToYear %>% 
+  select(Month, Month2, TailNum, ArrDelay) %>% 
+  group_by(Month, Month2) %>% 
+  summarise(No_of_Flights = length(TailNum),
+            Average_Delay = round(mean(ArrDelay, na.rm = TRUE),2)) 
+
+BToYear
+#Best day of the week 
+#write.csv(BToYear, 'BToYear_190322.csv')
+```
+
+## Creating our plot
+```{r}
+Best_time_of_Year <- Y05_06_narm %>% 
+  select(ArrDelay, Month, Cancelled, Diverted) %>% 
+  mutate(Month2 = recode(Month, 
+                         '1'='Jan',
+                         '2'='Feb',
+                         '3'='Mar',
+                         '4'='Apr',
+                         '5'='May',
+                         '6'='Jun',
+                         '7'='Jul',
+                         '8'='Aug',
+                         '9'='Sep',
+                         '10'='Oct',
+                         '11'='Nov',
+                         '12'='Dec'))
+Best_time_of_Year
+```
+
+```{r}
+Best_time_of_Year2 <- Best_time_of_Year %>% 
+  group_by(Month, Month2) %>% 
+  filter(Cancelled == 0, Diverted == 0) %>%   
+  summarize(Max_Delay = max(ArrDelay, na.rm = TRUE),
+            Min_Delay = min(ArrDelay, na.rm = TRUE),
+            Avg_Delay = mean(ArrDelay, na.rm = TRUE),
+            Q1 = quantile(ArrDelay, 0.25, na.rm = TRUE),
+            Q2 = quantile(ArrDelay, 0.5,na.rm = TRUE),
+            Q3 = quantile(ArrDelay, 0.75, na.rm = TRUE)) %>% 
+  arrange(Month) 
+Best_time_of_Year2
+```
+
+```{r}
+#Best_time_of_Year2$Month <- as.factor(Best_time_of_Year2$Month)
+
+str(Best_time_of_Year2)
+Best_time_of_Year2
+```
+
+
+```{r}
+BTOTY_plot <- ggplot(Best_time_of_Year2) + 
+  geom_bar(aes(x = Month, y = Avg_Delay), 
+           stat = 'identity', fill = colours[2], color = 'black') +
+  theme_classic() + 
+  labs(title = "Average Arrival Delay (Month)", x = "Month", 
+       y = " Average Delay (Mins)") + 
+  geom_text(aes(x = Month, y = Avg_Delay, label = round(Avg_Delay,2)),
+            vjust = -0.5) +
+  scale_x_discrete(name = 'Day', limits = Best_time_of_Year2$Month2)
+BTOTY_plot
+```
+
+### Disconnecting from db
+```{r}
+dbDisconnect(conn)
+```

@@ -1,0 +1,508 @@
+---
+title: "Q$"
+author: "Gerald"
+date: "3/4/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/geral/Repository/Coursework/Dataset/")
+```
+
+```{r}
+setwd("C:/Users/geral/Repository/Coursework/Dataset")
+getwd()
+```
+
+```{r}
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+library(ggthemes)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(RColorBrewer)
+library(car)
+library(broom)
+```
+
+# Basic Setup
+For this we will be taking a look at the year 2005, selecting specific periods and airports to observe any cascading effects.
+
+### Connecting to DB Browser
+```{r}
+conn <- dbConnect(RSQLite::SQLite(), "dataset.db")
+```
+
+```{r}
+airports <- dbGetQuery(conn, "
+                       SELECT * 
+                       FROM airports")
+```
+
+```{r}
+carriers <- dbGetQuery(conn, "
+                       SELECT * 
+                       FROM carriers")
+```
+
+```{r}
+Q4_2005 <- dbGetQuery(conn, "
+                 SELECT *
+                 FROM '2005'
+                 WHERE ArrTime <= 2359 AND DepTime <=2359")
+
+Q4_2005_narm <- na.omit(Q4_2005)
+rm(Q4_2005)
+str(Q4_2005_narm)
+# Observations : 6,982,428 
+```
+
+### Extraction Functions
+We create 4 functions to extract arrival and departure delays TO our target airport and arrival and departure delays FROM our target airport.
+
+```{r}
+# function to extract data depdelay TO a target airport
+to_depdelay <- function(mon, day, dest){
+  # Dest must be in 'dest'
+  Q4_2005_narm %>% 
+    filter(Month == mon, DayofMonth == day, Cancelled == 0, Diverted == 0,
+           Dest == dest, DepTime <= 2359, ArrTime <= 2359) %>% 
+    select(TailNum, CRSDepTime,DepDelay) %>% 
+    arrange(CRSDepTime) %>% 
+    rename('Scheduled_Time' = 'CRSDepTime',
+           'Delay' = 'DepDelay')
+}
+
+# sample
+# testtoATLDepDelay <- tp_depdelay(7,7, 'ATL')
+# creating a category column 
+# i <- nrows(testtoATLDepDelay)
+# testtoATLDepDelay$cat <- rep('Departure to ATL', i)
+```
+
+```{r}
+# function to extract data arrdelay TO a target airport
+to_arrdelay <- function(mon, day, dest){
+  # Dest must be in 'dest'
+  Q4_2005_narm %>% 
+    filter(Month == mon, DayofMonth == day, Cancelled == 0, Diverted == 0,
+           Dest == dest, DepTime <= 2359, ArrTime <= 2359) %>% 
+    select(TailNum, CRSArrTime,ArrDelay) %>% 
+    arrange(CRSArrTime) %>% 
+    rename('Scheduled_Time' = 'CRSArrTime',
+           'Delay' = 'ArrDelay')
+}
+
+# sample
+# testtoATLArrDelay <- tp_arrdelay(1,1, 'ATL')
+# creating a category column
+# i <- nrows(testtoATLArrDelay)
+# testtoATLArrDelay$cat <- rep('Arrival at ATL', i)
+```
+
+```{r}
+# function to extract data depdelay FROM a target airport
+from_depdelay <- function(mon, day, ori){
+  # Origin must be in 'ori'
+  Q4_2005_narm %>% 
+    filter(Month == mon, DayofMonth == day, Cancelled == 0, Diverted == 0,
+           Origin == ori, DepTime <= 2359, ArrTime <= 2359) %>% 
+    select(TailNum, CRSDepTime,DepDelay) %>% 
+    arrange(CRSDepTime) %>% 
+    rename('Scheduled_Time' = 'CRSDepTime',
+           'Delay' = 'DepDelay')
+}
+```
+
+```{r}
+# function to extract data arrdelay FROM a target airport
+from_arrdelay <- function(mon, day, ori){
+  # Origin must be in 'ori'
+  Q4_2005_narm %>% 
+    filter(Month == mon, DayofMonth == day, Cancelled == 0, Diverted == 0,
+           Origin == ori, DepTime <= 2359, ArrTime <= 2359) %>% 
+    select(TailNum, CRSArrTime,ArrDelay) %>% 
+    arrange(CRSArrTime) %>% 
+    rename('Scheduled_Time' = 'CRSArrTime',
+           'Delay' = 'ArrDelay')  
+}
+```
+
+## Checks
+We will be observing airports which have the highest air traffic.
+```{r}
+count <- Q4_2005_narm %>% 
+  count(Dest) %>% 
+  arrange(n)
+tail(count)
+
+# Destination with the most flights is: 
+#   ATL : 413342
+#   ORD : 327943
+#   DFW : 302266
+
+airports[c(airports$iata == 'ATL'| airports$iata == 'ORD'| 
+             airports$iata == 'DFW'),]
+```
+
+# Observations
+With that we can begin. We note that in Q1 the month of July has the highest Arrival delay followed by December and then June. 
+Likewise, in descending order, Friday, Thursday and Monday have the highest Arrival Delay. With average delays of 10.85, 10.55 and 8.28 minutes respectively. 
+
+So, we compared the Friday of July for the top 3 airports, ATL, DFW and ORD.
+## ATL, Atlanta
+```{r}
+#                             07/07/2005 ATL
+#                               Friday
+#                         DepDelay from Q1 : 10.85
+
+toATLdep0707 <- to_depdelay(7,7, 'ATL')
+i <- nrow(toATLdep0707)
+toATLdep0707$cat <- rep('Departure to ATL', i)
+str(toATLdep0707)
+
+toATLarr0707 <- to_arrdelay(7,7, 'ATL')
+i <- nrow(toATLarr0707)
+toATLarr0707$cat <- rep('Arrival at ATL', i)
+str(toATLarr0707)
+
+toATLcombined0707 <- rbind(toATLdep0707, toATLarr0707)
+toATLcombined0707
+
+fromATLdep0707 <- from_depdelay(7,7, 'ATL')
+i <- nrow(fromATLdep0707)
+fromATLdep0707$cat <- rep('Departure from ATL', i)
+str(fromATLdep0707)
+
+fromATLarr0707 <- from_arrdelay(7,7, 'ATL')
+i <- nrow(fromATLarr0707)
+fromATLarr0707$cat <- rep('Arrival from ATL', i)
+str(fromATLarr0707)
+
+fromATLcombined0707 <- rbind(fromATLdep0707, fromATLarr0707)
+fromATLcombined0707
+```
+
+```{r}
+#                               Plot
+#                           07/07/2005 ATL
+#                               Friday
+
+plottoATL_combine0707 <- ggplot(toATLcombined0707) +
+  geom_point(aes(x = Scheduled_Time, y = Delay, color = cat),
+             shape = 1, alpha = 0.5) +
+  scale_color_manual(values = c('red', 'blue')) +
+  geom_hline(yintercept = 10.85, color = 'red') +
+  # from Q1, avg arr delay = 10.85
+  geom_hline(yintercept = 0) + 
+  labs(title = 'to ATL, Fri 07/07/2005', x = 'Scheduled Time', y = 'Delay') +
+  scale_x_continuous(name = 'Scheduled Time', limits = c(0,2359)) +
+  theme_classic() +
+  theme(legend.position = 'bottom')
+plottoATL_combine0707
+
+# from ATL
+plotfromATL_combine0707 <- ggplot(fromATLcombined0707) +
+  geom_point(aes(x = Scheduled_Time, y = Delay, color = cat), 
+             shape = 1, alpha = 0.8) +
+  geom_hline(yintercept = 10.85, color = 'red') +
+  # since day = 1, from Q1, avg arr delay = 10.85
+  geom_hline(yintercept = 0) + 
+  labs(title = 'from ATL, Fri 07/07/2005', x = 'Scheduled Time', y = 'Delay') +
+  scale_x_continuous(name = 'Scheduled Time', limits = c(0,2359)) +
+  theme_classic() +
+  theme(legend.position = 'bottom')
+plotfromATL_combine0707
+```
+## DFW, Dallas-Fort Worth
+```{r}
+#                             07/07/2005 DFW
+#                               Friday
+#                         DepDelay from Q1 : 10.85
+
+toDFWdep0707 <- to_depdelay(7,7, 'DFW')
+i <- nrow(toDFWdep0707)
+toDFWdep0707$cat <- rep('Departure to DFW', i)
+str(toDFWdep0707)
+
+toDFWarr0707 <- to_arrdelay(7,7, 'DFW')
+i <- nrow(toDFWarr0707)
+toDFWarr0707$cat <- rep('Arrival at DFW', i)
+str(toDFWarr0707)
+
+toDFWcombined0707 <- rbind(toDFWdep0707, toDFWarr0707)
+toDFWcombined0707
+
+fromDFWdep0707 <- from_depdelay(7,7, 'DFW')
+i <- nrow(fromDFWdep0707)
+fromDFWdep0707$cat <- rep('Departure from DFW', i)
+str(fromDFWdep0707)
+
+fromDFWarr0707 <- from_arrdelay(7,7, 'DFW')
+i <- nrow(fromDFWarr0707)
+fromDFWarr0707$cat <- rep('Arrival from DFW', i)
+str(fromDFWarr0707)
+
+fromDFWcombined0707 <- rbind(fromDFWdep0707, fromDFWarr0707)
+fromDFWcombined0707
+```
+
+```{r}
+#                               Plot
+#                           07/07/2005 DFW
+#                               Friday
+
+plottoDFW_combine0707 <- ggplot(toDFWcombined0707) +
+  geom_point(aes(x = Scheduled_Time, y = Delay, color = cat),
+             shape = 1, alpha = 0.5) +
+  scale_color_manual(values = c('red', 'blue')) +
+  geom_hline(yintercept = 10.85, color = 'red') +
+  # from Q1, avg arr delay = 10.85
+  geom_hline(yintercept = 0) + 
+  labs(title = 'to DFW, Fri 07/07/2005', x = 'Scheduled Time', y = 'Delay') +
+  scale_x_continuous(name = 'Scheduled Time', limits = c(0,2359)) +
+  theme_classic() +
+  theme(legend.position = 'bottom')
+plottoDFW_combine0707
+
+# from DFW
+plotfromDFW_combine0707 <- ggplot(fromDFWcombined0707) +
+  geom_point(aes(x = Scheduled_Time, y = Delay, color = cat), 
+             shape = 1, alpha = 0.8) +
+  geom_hline(yintercept = 10.85, color = 'red') +
+  # since day = 1, from Q1, avg arr delay = 10.85
+  geom_hline(yintercept = 0) + 
+  labs(title = 'from DFW, Fri 07/07/2005', x = 'Scheduled Time', y = 'Delay') +
+  scale_x_continuous(name = 'Scheduled Time', limits = c(0,2359)) +
+  theme_classic() +
+  theme(legend.position = 'bottom')
+plotfromDFW_combine0707
+```
+
+## ORD, Chicago
+```{r}
+#                             07/07/2005 ORD
+#                               Friday
+#                         DepDelay from Q1 : 10.85
+
+toORDdep0707 <- to_depdelay(7,7, 'ORD')
+i <- nrow(toORDdep0707)
+toORDdep0707$cat <- rep('Departure to ORD', i)
+str(toORDdep0707)
+
+toORDarr0707 <- to_arrdelay(7,7, 'ORD')
+i <- nrow(toORDarr0707)
+toORDarr0707$cat <- rep('Arrival at ORD', i)
+str(toORDarr0707)
+
+toORDcombined0707 <- rbind(toORDdep0707, toORDarr0707)
+toORDcombined0707
+
+fromORDdep0707 <- from_depdelay(7,7, 'ORD')
+i <- nrow(fromORDdep0707)
+fromORDdep0707$cat <- rep('Departure from ORD', i)
+str(fromORDdep0707)
+
+fromORDarr0707 <- from_arrdelay(7,7, 'ORD')
+i <- nrow(fromORDarr0707)
+fromORDarr0707$cat <- rep('Arrival from ORD', i)
+str(fromORDarr0707)
+
+fromORDcombined0707 <- rbind(fromORDdep0707, fromORDarr0707)
+fromORDcombined0707
+```
+
+```{r}
+#                               Plot
+#                           07/07/2005 ORD
+#                               Friday
+
+plottoORD_combine0707 <- ggplot(toORDcombined0707) +
+  geom_point(aes(x = Scheduled_Time, y = Delay, color = cat),
+             shape = 1, alpha = 0.5) +
+  scale_color_manual(values = c('red', 'blue')) +
+  geom_hline(yintercept = 10.85, color = 'red') +
+  # from Q1, avg arr delay = 10.85
+  geom_hline(yintercept = 0) + 
+  labs(title = 'to ORD, Fri 07/07/2005', x = 'Scheduled Time', y = 'Delay') +
+  scale_x_continuous(name = 'Scheduled Time', limits = c(0,2359)) +
+  theme_classic() +
+  theme(legend.position = 'bottom')
+plottoORD_combine0707
+
+# from ORD
+plotfromORD_combine0707 <- ggplot(fromORDcombined0707) +
+  geom_point(aes(x = Scheduled_Time, y = Delay, color = cat), 
+             shape = 1, alpha = 0.8) +
+  geom_hline(yintercept = 10.85, color = 'red') +
+  # since day = 1, from Q1, avg arr delay = 10.85
+  geom_hline(yintercept = 0) + 
+  labs(title = 'from ORD, Fri 07/07/2005', x = 'Scheduled Time', y = 'Delay') +
+  scale_x_continuous(name = 'Scheduled Time', limits = c(0,2359)) +
+  theme_classic() +
+  theme(legend.position = 'bottom')
+plotfromORD_combine0707
+```
+
+# Further Investigation
+We did some testings. Our objective now is to compare if the mean avg delay of the previous period has any correlation. And to see the number of flights in each period.
+
+We reuse the function in q1 to categorise each observation into their timebin. 
+```{r}
+time <- function(x){
+  if (x < 100){
+    return('0000-0100')
+  }else if (x >= 100 & x < 200){
+    return('0100-0200')
+  }else if (x >= 200 & x < 300){
+    return('0200-0300')
+  }else if (x >= 300 & x < 400){
+    return('0300-0400')
+  }else if (x >= 400 & x < 500){
+    return('0400-0500')
+  }else if (x >= 500 & x < 600){
+    return('0500-0600')
+  }else if (x >= 600 & x < 700){
+    return('0600-0700')
+  }else if (x >= 700 & x < 800){
+    return('0700-0800')
+  }else if (x >= 800 & x < 900){
+    return('0800-0900')
+  }else if (x >= 900 & x < 1000){
+    return('0900-1000')
+  }else if (x >= 1000 & x < 1100){
+    return('1000-1100')
+  }else if (x >= 1100 & x < 1200){
+    return('1100-1200')
+  }else if (x >= 1200 & x < 1300){
+    return('1200-1300')
+  }else if (x >= 1300 & x < 1400){
+    return('1300-1400')
+  }else if (x >= 1400 & x < 1500){
+    return('1400-1500')
+  }else if (x >= 1500 & x < 1600){
+    return('1500-1600')
+  }else if (x >= 1600 & x < 1700){
+    return('1600-1700')
+  }else if (x >= 1700 & x < 1800){
+    return('1700-1800')
+  }else if (x >= 1800 & x < 1900){
+    return('1800-1900')
+  }else if (x >= 1900 & x < 2000){
+    return('1900-2000')
+  }else if (x >= 2000 & x < 2100){
+    return('2000-2100')
+  }else if (x >= 2100 & x < 2200){
+    return('2100-2200')
+  }else if (x >= 2200 & x < 2300){
+    return('2200-2300')
+  }else if (x >= 2300 & x < 2400){
+    return('2300-2359')
+  }else{
+    return(NA)
+  }
+}
+```
+
+#                    Our focus will be on ATL on 07072005
+## toATL
+
+```{r}
+# Creating a Timebin column and populate using the above function
+toATLcombined0707$Timebin <- sapply(toATLcombined0707$Scheduled_Time, 
+                                   FUN = time)
+# checking the unique values
+length(unique(toATLcombined0707$Timebin))
+unique(toATLcombined0707$Timebin)
+toATLcombined0707
+```
+```{r}
+# to find the mean of each cat
+test <- toATLcombined0707 %>%
+  filter(cat == 'Arrival at ATL') %>% 
+  group_by(Timebin) %>%
+  summarise(count_toATL = n(),
+            avg_toATL = round(mean(Delay),2)) 
+test
+```
+
+## fromATL
+```{r}
+# Creating a Timebin column and populate using the above function
+fromATLcombined0707$Timebin <- sapply(fromATLcombined0707$Scheduled_Time, 
+                                    FUN = time)
+# checking the unique values
+length(unique(fromATLcombined0707$Timebin))
+unique(fromATLcombined0707$Timebin)
+ fromATLcombined0707
+```
+```{r}
+# to find the mean of each cat
+test2 <- fromATLcombined0707 %>%
+  filter(cat == 'Arrival from ATL') %>% 
+  group_by(Timebin) %>%
+  summarise(count_fromATL = n(),
+            avg_fromATL = round(mean(Delay),2))
+test2
+```
+```{r}
+# combining both test & test2 together
+ttt <- test %>% 
+  full_join(test2) %>% 
+  arrange(Timebin)
+ttt
+
+# We rearrange the order of the time bin. Focus on flights from 0500-2359.
+ttt2 <- ttt[3:21,]
+ttt2
+#write.csv(ttt2,'q4ATL.csv')
+```
+## Plots for visualisation
+```{r}
+# We want to combine both to and from, and count the number of flights
+## to ATL
+check1 <- toATLcombined0707 %>% 
+  filter(cat == 'Arrival at ATL', Timebin != '0000-0100', Timebin != '0100-0200' )
+## from ATL
+check2 <- fromATLcombined0707 %>% 
+  filter(cat == 'Arrival from ATL', Timebin != '0000-0100', Timebin != '0100-0200')
+
+## gross
+check <- rbind.data.frame(check1, check2)
+check <- check %>% select(Timebin,Scheduled_Time,TailNum,Delay,cat)
+check
+```
+
+```{r}
+plot4 <- ggplot(check)
+plot4 + 
+  geom_point(aes(x=Scheduled_Time,
+                 y=Delay, 
+                 color = cat), alpha=0.4) + 
+  geom_hline(yintercept = 60, color = 'red') +
+  geom_hline(yintercept = 45, color = 'blue') +
+  geom_hline(yintercept = 10.85, color = 'black') +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(title = 'ATL, Fri 07/07/2005', x = 'Scheduled Time', y = 'Delay') +
+  theme_classic()
+
+plot4 + 
+  geom_bar(aes(x=Timebin, 
+               color = cat,
+               fill=cat,
+               ),
+           position = position_dodge2(width = 0.9)) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+  labs(title = 'Count of Flights', x = 'Time Bin', y = 'Count')
+
+```
+
+
+### Disconnecting from db
+```{r}
+dbDisconnect(conn)
+```

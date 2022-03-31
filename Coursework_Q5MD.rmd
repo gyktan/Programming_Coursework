@@ -1,0 +1,676 @@
+---
+title: "Q5"
+author: "Gerald"
+date: '2022-03-18'
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/geral/Repository/Coursework/Dataset/")
+```
+Run the above code in case of issues in the working directory.
+
+```{r library}
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+library(ggthemes)
+library(tidyverse)
+library(RColorBrewer)
+library(car)
+library(broom)
+library(mlr3)
+library(mlr3learners)
+library(mlr3pipelines)
+library(glmnet)
+library(mlr3tuning)
+library(paradox)
+library(mlr3viz)
+library(skimr)
+```
+
+```{r WD}
+getwd()
+setwd("C:/Users/geral/Repository/Coursework/Dataset")
+```
+
+```{r dbConnect}
+conn <- dbConnect(RSQLite::SQLite(), "dataset.db")
+```
+
+**Goal is to select all the data in a state and build a Machine Learning model**
+Previously in Question 2, we setup our data for a regression model. For this question, we will be using a similar approach. 
+
+First lets load the entire data set of 2005 - 2006 on to the global environment. According to Question 3, we arranged the number of flights in the state in descending order. In the middle, is LA, Louisiana, with a total of 125,996 flights.
+
+We choose state **LA, Louisiana**
+```{r}
+summ <-  dbGetQuery(conn, "
+                     SELECT *
+                     FROM Y05_06 JOIN airports ON Y05_06.Dest=airports.iata
+                     WHERE Cancelled = 0 AND Diverted = 0 ")
+```
+
+
+### Choose state **LA, Louisiana**
+According to Question 3, we arranged the number of flights in the state in descending order. 
+In the middle, is LA, Louisiana, with a total of 125,996 flights.
+
+The state with the highest number of flights: *CA, California*
+```{r}
+state_LA <- summ %>% 
+  filter(Cancelled == 0, Diverted == 0, state == 'LA')
+state_LA <- na.omit(state_LA)
+state_LA
+```
+
+```{r}
+#state_LA$Month <- as.factor(state_LA$Month)
+#state_LA$DayOfWeek <- as.factor(state_LA$DayOfWeek)
+
+#str(state_LA)
+```
+
+### Extracting plane data
+```{r}
+plane_data <- dbGetQuery(conn, 
+                         "SELECT tailnum, manufacturer, model, status, 
+                plane_data.year AS Year_Manufactured
+                FROM plane_data")
+tail(plane_data)
+str(plane_data)
+plane_data$manufacturer <- as.factor(plane_data$manufacturer)
+plane_data$status <- as.factor(plane_data$status)
+plane_data$Year_Manufactured <- as.integer(plane_data$Year_Manufactured)
+```
+
+### Combine state_ma and plane data
+```{r}
+state_LA_combined <- state_LA %>% 
+  inner_join(plane_data, by = c("TailNum" = "tailnum"))
+
+state_LA_combined <- state_LA_combined %>% 
+  select(Year, Month, DayOfWeek, DepDelay, ArrDelay, CRSDepTime, CRSArrTime, CRSElapsedTime, Year_Manufactured, status, manufacturer, Cancelled, 
+         Diverted) %>% 
+  filter(Year_Manufactured != 'na',Year_Manufactured != '0',
+         Year_Manufactured != 'NA', DepDelay != 'NA',
+         status != 'Registered to Mfr', status != 'NA')
+str(state_LA_combined)
+state_LA_combined
+```
+
+### Creating the Age and Old Dummy Variable
+
+```{r OldDV}
+state_LA_combined <- state_LA_combined %>% 
+  mutate(Age = Year - Year_Manufactured,
+         Old = Age)
+state_LA_combined$Old <- as.integer(ifelse(state_LA_combined$Old >= 10, 1,0))
+
+state_LA_combined <- state_LA_combined %>% 
+  filter(Age >= 0)
+state_LA_combined
+```
+
+## Creating the seasons Dummy Variables
+We define Winter as 12, 1, 2 or December, January, and February. 
+Summer as 6, 7, 8 or June, July, and August. 
+Fall as 9, 10, 11 or September, October, November. 
+Spring as 3, 4, 5 or March, April, and May.
+
+**Winter is the reference category** 
+Dummy Variables are : Summer, Fall and Spring
+```{r SummerDV}
+#Summer as 6, 7, 8 or June, July, and August. 
+Summer <- state_LA_combined %>%
+  filter(Month == "6"|Month == "7"|Month == "8") 
+Summer
+```
+
+```{r}
+i <- nrow(Summer)
+i
+SummerDV <- c(rep(1,i))
+FallDV <- c(rep(0,i))
+SpringDV <- c(rep(0,i))
+
+Summer <- cbind(Summer, SummerDV, FallDV, SpringDV)
+Summer
+str(Summer)
+tail(Summer)
+```
+
+
+```{r}
+#Fall as 9, 10, 11 or September, October, November. 
+Fall <- state_LA_combined %>%
+  filter(Month == "9"|Month == "10"|Month == "11") 
+Fall
+```
+
+```{r}
+i <- nrow(Fall)
+print(paste('Observations : ',i))
+
+SummerDV <- c(rep(0,i))
+FallDV <- c(rep(1,i))
+SpringDV <- c(rep(0,i))
+
+Fall <- cbind(Fall, SummerDV, FallDV, SpringDV)
+Fall
+tail(Fall)
+str(Fall)
+```
+
+```{r}
+test <- rbind(Summer, Fall)
+test
+```
+
+```{r}
+#Spring as 3, 4, 5 or March, April, and May.
+Spring <- state_LA_combined %>%
+  filter(Month == "3"|Month == "4"|Month == "5") 
+Spring
+```
+
+```{r}
+i <- nrow(Spring)
+print(paste('Observations : ',i))
+
+SummerDV <- c(rep(0,i))
+FallDV <- c(rep(0,i))
+SpringDV <- c(rep(1,i))
+
+Spring <- cbind(Spring, SummerDV, FallDV, SpringDV)
+Spring
+tail(Spring)
+str(Spring)
+
+test <- rbind(test, Spring)
+test
+```
+
+
+```{r}
+# Winter as 12, 1, 2
+Winter <- state_LA_combined %>%
+  filter(Month == "12"|Month == "1"|Month == "2") 
+Winter
+```
+
+```{r}
+i <- nrow(Winter)
+print(paste('Observations : ',i))
+
+SummerDV <- c(rep(0,i))
+FallDV <- c(rep(0,i))
+SpringDV <- c(rep(0,i))
+
+Winter <- cbind(Winter, SummerDV, FallDV, SpringDV)
+Winter
+tail(Winter)
+str(Winter)
+
+test <- rbind(test, Winter)
+test
+str(test)
+```
+## Finalising the data set
+
+```{r}
+test <- na.omit(test)
+
+state_LA_final <- test %>% 
+  select(ArrDelay, Month, DayOfWeek, Age, Old, CRSArrTime, CRSDepTime, CRSElapsedTime, SummerDV, FallDV, SpringDV)
+
+state_LA_final$Old <- as.integer(state_LA_final$Old)
+state_LA_final$SummerDV <- as.integer(state_LA_final$SummerDV)
+state_LA_final$FallDV <- as.integer(state_LA_final$FallDV)
+state_LA_final$SpringDV <- as.integer(state_LA_final$SpringDV)
+
+state_LA_final
+str(state_LA_final)
+```
+Finding the correlation
+```{r}
+
+corr_table <- as.data.frame(round(cor(state_LA_final), 2))
+corr_table
+```
+
+
+# Machine Learning 
+We attempt to build models, one excluding Depdelays and one including DepDelay.
+
+#                         1) Excluding DepDelay
+
+### Setting up the task and measure. 
+For the measure we will be using **mean squared error** to see performance of model.
+
+```{r Task_Measure}
+task <- TaskRegr$new('For State: LA, Louisiana', backend = state_LA_final, target = 'ArrDelay')   
+measure <- msr('regr.mse')      
+```
+
+```{r}
+task
+```
+
+### Choosing Model
+Run ?lrn() to see list of learner (models)
+```{r}
+learner_lm <- lrn('regr.lm')
+
+### Input Missing values, converting to GraphLearner.new()
+gr_lm <- po('imputemean') %>>%
+  po(learner_lm)
+
+glrn_lm <- GraphLearner$new(gr_lm)
+
+### training and checking measure
+#Choosing an approriate sample size for training the model
+set.seed(1)
+train_set <- sample(task$nrow, 0.7 * task$nrow)     
+# sample 70% of the observations
+
+#The remaining data set is used for testing
+test_set <- setdiff(seq_len(task$nrow), train_set)
+
+#Training the model 
+glrn_lm$train(task, row_ids = train_set)
+```
+
+## Using the model to predict, to find **MSE** and **Estimates**
+
+```{r}
+glrn_lm_mse <- glrn_lm$predict(task, row_ids = test_set)$score()
+glrn_lm_mse
+```
+
+```{r}
+glrn_lm_estimates <- glrn_lm$predict(task, row_ids = test_set)           
+glrn_lm_estimates 
+```
+
+# **Other Machine Learning Models**
+
+## **Ridge regression with lambda not specified**
+
+### Building and training the model
+```{r}
+### Selecting model
+learner_ridge2 <- lrn('regr.glmnet') 
+
+# specifying parameter
+learner_ridge2$param_set$values <- list(alpha = 0)
+
+# pipeline in to graphlearner model
+gr_ridge2 <- po('scale') %>>%
+  po('imputemean') %>>%
+  po(learner_ridge2)
+glrn_ridge2 <- GraphLearner$new(gr_ridge2)
+
+# Set up tuning environment
+tune_lambda <- ParamSet$new (list(
+  ParamDbl$new('regr.glmnet.lambda', lower = 0.001, upper = 2)))
+tuner<-tnr('grid_search')
+terminator <- trm('evals', n_evals = 20)
+
+#Put everything together in a new learner
+at_ridge <- AutoTuner$new(
+  learner = glrn_ridge2,
+  resampling = rsmp('cv', folds = 5), # k- folds
+  measure = measure,
+  search_space = tune_lambda,
+  terminator = terminator,
+  tuner = tuner
+)
+
+#Train the learner on the training data
+at_ridge$train(task, row_ids = train_set)
+```
+
+## **Finding out the optimal lambda**
+```{r}
+at_ridge$model
+at_ridge_mse <- at_ridge$predict(task, row_ids = test_set)$score() 
+at_ridge_estimates <- at_ridge$predict(task, row_ids = test_set)
+at_ridge_mse
+at_ridge_estimates
+```
+
+# **Random Forest**
+```{r Random_Forest}
+# Selecting model
+learner_rf <- lrn('regr.ranger') 
+
+# Setting parameters
+learner_rf$param_set$values <- list(min.node.size = 4)
+
+# pipeline into graphlearner 
+gr_rf <- po('scale') %>>%
+  po('imputemean') %>>%
+  po(learner_rf)
+glrn_rf <- GraphLearner$new(gr_rf)
+
+# setting the number of trees
+tune_ntrees <- ParamSet$new (list(
+  ParamInt$new('regr.ranger.num.trees', lower = 50, upper = 600)
+))
+
+# putting everything into new learner
+at_rf <- AutoTuner$new(
+  learner = glrn_rf,
+  resampling = rsmp('cv', folds = 5),
+  measure = measure,
+  search_space = tune_ntrees,
+  terminator = terminator,
+  tuner = tuner
+)
+
+# training the model
+at_rf$train(task, row_ids = train_set)
+```
+
+### testing the model
+```{r}
+at_rf$model
+
+at_rf_mse <- at_rf$predict(task, row_ids = test_set)$score() 
+at_rf_mse
+
+at_rf_estimates <- at_rf$predict(task, row_ids = test_set)
+at_rf_estimates
+```
+
+# **Benchmarking**
+To compare all the 3 models 
+
+```{r}
+set.seed(123) # for reproducible results
+
+# list of learners
+lrn_list <- list(
+  glrn_lm,
+  at_ridge,
+  at_rf
+)
+```
+
+### Set the benchmark design and run the comparisons
+Very long run time, almost 1.5 hours
+```{r}
+bm_design <- benchmark_grid(task = task, resamplings = rsmp('cv', folds = 5), learners = lrn_list)
+bmr <- benchmark(bm_design, store_models = TRUE)
+```
+
+```{r}
+autoplot(bmr) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  theme_classic()
+
+# ?autoplot
+```
+
+### Comparison 
+```{r}
+glrn_lm$model
+at_ridge$model[[2]]
+at_rf$model[[2]]
+```
+For comparison of the MSE. Mean squared error.
+```{r}
+glrn_lm_mse
+
+at_ridge_mse
+
+at_rf_mse
+```
+
+```{r}
+glrn_lm_estimates 
+
+at_ridge_estimates
+
+at_rf_estimates
+```
+
+Compiling the responses into a single dataframe
+```{r}
+row_ids <- at_ridge_estimates$row_ids
+truth <- at_ridge_estimates$truth
+glrn_lm_response <- glrn_lm_estimates$response
+at_ridge_response <- at_ridge_estimates$response
+at_rf_response <- at_rf_estimates$response
+
+df <- as.data.frame(cbind(row_ids, truth, glrn_lm_response, at_ridge_response, at_rf_response))
+
+
+# write.csv(df, "mltruth_response1803.csv")
+```
+
+#                             2) Including DepDelay
+
+```{r}
+test <- na.omit(test)
+
+state_LA_finaldep <- test %>% 
+  select(ArrDelay, DepDelay, Month, DayOfWeek, Age, Old, CRSArrTime, CRSDepTime, CRSElapsedTime, SummerDV, FallDV, SpringDV)
+
+state_LA_finaldep$Old <- as.integer(state_LA_finaldep$Old)
+state_LA_finaldep$SummerDV <- as.integer(state_LA_finaldep$SummerDV)
+state_LA_finaldep$FallDV <- as.integer(state_LA_finaldep$FallDV)
+state_LA_finaldep$SpringDV <- as.integer(state_LA_finaldep$SpringDV)
+
+state_LA_finaldep
+str(state_LA_finaldep)
+```
+
+```{r Task_Measure}
+task <- TaskRegr$new('For State: LA, Louisiana', backend = state_LA_finaldep, target = 'ArrDelay')   
+measure <- msr('regr.mse')      
+```
+
+```{r}
+task
+```
+
+### Choosing Model
+Run ?lrn() to see list of learner (models)
+```{r}
+learner_lm <- lrn('regr.lm')
+
+### Input Missing values, converting to GraphLearner.new()
+gr_lm <- po('imputemean') %>>%
+  po(learner_lm)
+
+glrn_lm <- GraphLearner$new(gr_lm)
+
+### training and checking measure
+#Choosing an approriate sample size for training the model
+set.seed(1)
+train_set <- sample(task$nrow, 0.7 * task$nrow)     
+# sample 70% of the observations
+
+#The remaining data set is used for testing
+test_set <- setdiff(seq_len(task$nrow), train_set)
+
+#Training the model 
+glrn_lm$train(task, row_ids = train_set)
+```
+
+## Using the model to predict, to find **MSE** and **Estimates**
+
+```{r}
+glrn_lm_mse <- glrn_lm$predict(task, row_ids = test_set)$score()
+glrn_lm_mse
+```
+
+```{r}
+glrn_lm_estimates <- glrn_lm$predict(task, row_ids = test_set)           
+glrn_lm_estimates 
+```
+
+# **Other Machine Learning Models**
+
+## **Ridge regression with lambda not specified**
+
+### Building and training the model
+```{r}
+### Selecting model
+learner_ridge2 <- lrn('regr.glmnet') 
+
+# specifying parameter
+learner_ridge2$param_set$values <- list(alpha = 0)
+
+# pipeline in to graphlearner model
+gr_ridge2 <- po('scale') %>>%
+  po('imputemean') %>>%
+  po(learner_ridge2)
+glrn_ridge2 <- GraphLearner$new(gr_ridge2)
+
+# Set up tuning environment
+tune_lambda <- ParamSet$new (list(
+  ParamDbl$new('regr.glmnet.lambda', lower = 0.001, upper = 2)))
+tuner<-tnr('grid_search')
+terminator <- trm('evals', n_evals = 20)
+
+#Put everything together in a new learner
+at_ridge <- AutoTuner$new(
+  learner = glrn_ridge2,
+  resampling = rsmp('cv', folds = 5), # k- folds
+  measure = measure,
+  search_space = tune_lambda,
+  terminator = terminator,
+  tuner = tuner
+)
+
+#Train the learner on the training data
+at_ridge$train(task, row_ids = train_set)
+```
+
+## **Finding out the optimal lambda**
+```{r}
+at_ridge$model
+at_ridge_mse <- at_ridge$predict(task, row_ids = test_set)$score() 
+at_ridge_estimates <- at_ridge$predict(task, row_ids = test_set)
+at_ridge_mse
+at_ridge_estimates
+```
+
+# **Random Forest**
+```{r Random_Forest}
+# Selecting model
+learner_rf <- lrn('regr.ranger') 
+
+# Setting parameters
+learner_rf$param_set$values <- list(min.node.size = 4)
+
+# pipeline into graphlearner 
+gr_rf <- po('scale') %>>%
+  po('imputemean') %>>%
+  po(learner_rf)
+glrn_rf <- GraphLearner$new(gr_rf)
+
+# setting the number of trees
+tune_ntrees <- ParamSet$new (list(
+  ParamInt$new('regr.ranger.num.trees', lower = 50, upper = 600)
+))
+
+# putting everything into new learner
+at_rf <- AutoTuner$new(
+  learner = glrn_rf,
+  resampling = rsmp('cv', folds = 5),
+  measure = measure,
+  search_space = tune_ntrees,
+  terminator = terminator,
+  tuner = tuner
+)
+
+# training the model
+at_rf$train(task, row_ids = train_set)
+```
+
+### testing the model
+```{r}
+at_rf$model
+
+at_rf_mse <- at_rf$predict(task, row_ids = test_set)$score() 
+at_rf_mse
+
+at_rf_estimates <- at_rf$predict(task, row_ids = test_set)
+at_rf_estimates
+```
+
+# **Benchmarking**
+To compare all the 3 models 
+
+```{r}
+set.seed(123) # for reproducible results
+
+# list of learners
+lrn_list <- list(
+  glrn_lm,
+  at_ridge,
+  at_rf
+)
+```
+
+### Set the benchmark design and run the comparisons
+Very long run time, almost 1.5 hours
+```{r}
+bm_design <- benchmark_grid(task = task, resamplings = rsmp('cv', folds = 5), learners = lrn_list)
+bmr <- benchmark(bm_design, store_models = TRUE)
+```
+
+```{r}
+autoplot(bmr) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  theme_classic()
+
+# ?autoplot
+```
+
+### Comparison 
+```{r}
+glrn_lm$model
+at_ridge$model[[2]]
+at_rf$model[[2]]
+```
+For comparison of the MSE. Mean squared error.
+```{r}
+glrn_lm_mse
+
+at_ridge_mse
+
+at_rf_mse
+```
+
+```{r}
+glrn_lm_estimates 
+
+at_ridge_estimates
+
+at_rf_estimates
+```
+
+Compiling the responses into a single dataframe
+```{r}
+row_ids <- at_ridge_estimates$row_ids
+truth <- at_ridge_estimates$truth
+glrn_lm_response <- glrn_lm_estimates$response
+at_ridge_response <- at_ridge_estimates$response
+at_rf_response <- at_rf_estimates$response
+
+df <- as.data.frame(cbind(row_ids, truth, glrn_lm_response, at_ridge_response, at_rf_response))
+df
+
+# write.csv(df, "mltruth_response1803.csv")
+```
+
+Disconnecting
+```{r}
+dbDisconnect(conn)
+```

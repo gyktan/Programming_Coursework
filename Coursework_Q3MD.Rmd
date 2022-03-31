@@ -1,0 +1,443 @@
+---
+title: "Q3"
+author: "Gerald"
+date: "2/26/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/geral/Repository/Coursework/Dataset/")
+```
+
+We first ensure our working directory is correct, and launch the libraries required.
+```{r setting-wd}
+getwd()
+setwd("C:/Users/geral/Repository/Coursework/Dataset")
+```
+
+```{r}
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+library(ggthemes)
+library(zoo)
+library(tidyverse)
+library(reshape2)
+```
+
+```{r}
+# Connecting to DB Browser
+conn <- dbConnect(RSQLite::SQLite(), "dataset.db")
+```
+
+### Approach
+My approach to this question is fairly lengthy. There are 3 parts to my solution. We start off by looking at the overall data set, we try to look for patterns as a whole and by the states. 
+In the second part, we proceed to look at states that display negative growth, and we end off by looking at states with positive growth.
+
+# Part 1
+## Summary of Destination
+```{r}
+summ <-  dbGetQuery(conn, "
+                     SELECT Year, Month, DayofMonth, DayofWeek, Origin, Dest, airports.iata, 
+                     airports.airport, airports.city, airports.state, airports.country
+                     FROM Y05_06 JOIN airports ON Y05_06.Dest=airports.iata
+                     WHERE Cancelled = 0 AND Diverted = 0 AND ArrTime <= 2359 AND DepTime <= 2359")
+summ$Origin <- as.factor(summ$Origin)
+summ$Dest <- as.factor(summ$Dest)
+summ$iata <- as.factor(summ$iata)
+summ$airport <- as.factor(summ$airport)
+summ$city <- as.factor(summ$city)
+summ$state <- as.factor(summ$state)
+summ$country <- as.factor(summ$country)
+```
+
+```{r}
+str(summ)
+# Observations : 13,979,513 
+```
+
+In the dataset there are destination that does not contain state / city
+summ_narm contains 13,970,740 obs
+```{r}
+summ_narm <- na.omit(summ)
+summ_narm
+# Observations : 13,970,740
+
+unique(summ_narm$state)
+length(unique(summ_narm$state))
+# states : 52
+
+# just to confirm the number of observations
+check <- summ %>% 
+  filter(is.na(state))
+str(check)
+```
+We found that MC Clellan-Palomar Airport and University Park, both in USA,  have missing values of state = NA. We proceed to remove observations of those two states.
+Number of observations : 8,778
+
+### List of the states
+```{r}
+states <- unique(summ_narm$state)
+states[1]
+
+typeof(states)
+```
+
+### Count of total number of flights in each state throughout '05 - '06
+```{r}
+str(summ_narm)
+```
+
+### The total flight in each state in each year
+```{r}
+summ_state_byyear <- summ_narm %>% 
+  select(state, Year) %>% 
+  filter(!is.na(state)) %>% 
+  arrange(state) %>% 
+  group_by(state, Year) %>% 
+  count(state) 
+
+summ_state_byyear 
+summary(summ_state_byyear)
+
+#write.csv(summ_state_byyear, "summ_state_byyear.csv") 
+```
+
+### The total flight in each state
+We arrange the number of flights in descending order. 
+The table is saved and used in the report.
+```{r}
+summ_state_total <- summ_narm %>% 
+  select(state) %>% 
+  filter(!is.na(state)) %>% 
+  group_by(state) %>% 
+  count(state) %>% 
+  arrange(desc(n))
+
+summ_state_total 
+
+
+sum(summ_state_total$n)
+# 13,970,740
+# write.csv(summ_state_total, "summ_state_total.csv") 
+```
+# Top and bottom 3 states with the most flights 
+The data frame shows the top and bottom 3 states, with the most and least number of flights.
+```{r}
+high3 <- head(summ_state_total,3)
+btm3 <- tail(summ_state_total,3)
+
+top_btm_3 <- rbind(high3,btm3)
+top_btm_3
+# write.csv(top_btm_3, "top_btm_3.csv")
+```
+
+## Visualisations
+### Daily time series 
+Daily chart not very meaningful hard to tell if there is an upward or downward trend. 
+
+Making a new column for the date ( daily )
+```{r}
+daily <- summ_narm
+daily$Date<-as.Date(paste(daily$Year,daily$Month,daily$DayofMonth,sep="-"),"%Y-%m-%d")
+head(daily)
+```
+
+Creating a daily time series of all states
+```{r}
+ts_daily <- daily %>% 
+  select(Date, Year, Month, DayofMonth, Origin, Dest, city, state) %>% 
+  filter(!is.na(state)) %>% 
+  arrange(Date) %>% 
+  group_by(Date) %>% 
+  count(Date)
+
+names(ts_daily)[2] <- 'Count'
+ts_daily
+```
+
+```{r}
+plot_ts_daily <- ggplot(ts_daily, aes(x = Date, y = Count))
+plot_ts_daily + 
+  geom_line() +
+  labs(title = 'Daily Count (Total)', y = 'Count', x = 'Date') +
+  theme_classic()
+```
+
+### Creating a monthly time series 
+Making a new column for the date ( month )
+Chart not very meaningful, an apparent upward trend
+
+```{r}
+monthly <- summ_narm
+monthly$Date<-as.yearmon(paste(monthly$Year,monthly$Month),"%Y %m")
+head(monthly)
+```
+
+Creating a plot that shows the monthly flights for all the states
+```{r}
+ts_total_monthly <- monthly %>% 
+  select(Date, Year, Month, Origin, Dest, city, state) %>% 
+  filter(!is.na(state)) %>% 
+  arrange(Date) %>% 
+  group_by(Date, Year, Month) %>% 
+  count(Month)
+ts_total_monthly
+```
+
+### Plot for Monthly Count (Total)
+```{r}
+plot_ts_total_monthly <- ggplot(ts_total_monthly, aes(x = Date, y = n))
+plot_ts_total_monthly +
+  geom_line() +
+  labs(title = 'Monthly Count (Total)', y = 'Count', x = 'Date') +
+  theme_classic() 
+```
+
+### To see if there is seasonality
+```{r}
+ts_total_monthly_2 <- monthly %>% 
+  select(Date, Year, Month, Origin, Dest, city, state) %>% 
+  filter(!is.na(state)) %>% 
+  arrange(Date) %>% 
+  group_by(Month, Year) %>% 
+  count(Month)
+ts_total_monthly_2
+```
+
+```{r}
+ts_total_monthly_2$Year <- as.factor(ts_total_monthly_2$Year)
+ts_total_monthly_2$Month <- as.factor(ts_total_monthly_2$Month)
+
+plot_ts_total_monthly2 <- ggplot(ts_total_monthly_2, 
+                                 aes(x = Month, y = n, color = Year))
+plot_ts_total_monthly2 +
+  geom_point(aes(x = Month, y = n, color = Year)) +
+  geom_line(aes(x = Month, y = n, color = Year, group = Year)) +
+  labs(title = 'Monthly Count (Total)', y = 'Count', x = 'Month') + 
+  scale_x_discrete(labels = c('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')) + 
+  theme_classic() 
+```
+
+While it seems that there is no increasing trend throughout the 2 years, we can consider to look individually at each state. 
+
+There are a total of 52 states
+```{r}
+ts_monthly <- monthly %>% 
+  select(Date, Year, Month, Origin, Dest, city, state) %>% 
+  filter(!is.na(state)) %>% 
+  arrange(Date) %>% 
+  group_by(Date, Year, Month, state) %>% 
+  count(Date)
+names(ts_monthly)[5] <- 'Count'
+ts_monthly
+```
+The plot shows the monthly count of each state, alot of colors, hard to interpret
+
+```{r}
+plot_ts_monthly <- ggplot(ts_monthly, aes(x = Date, y = Count))
+plot_ts_monthly + 
+  geom_line(aes(color = state)) +
+  labs(title = 'Monthly Count (By State)', y = 'Count', x = 'Date') +
+  theme_classic()
+```
+
+### To Find Annual Year over Year, y-o-y
+We want to compare the number of flights in 2006 against 2005, by each state. We do this by showing the year over year percentage change in flights in each state. 
+```{r}
+testann <- summ_narm %>% 
+  select(Year, state) %>% 
+  group_by(Year, state) %>% 
+  count(state)
+testann
+```
+This code shows us the Percentage change.
+```{r}
+testann_wide <- testann %>% 
+  pivot_wider(
+    id_cols = c(Year),
+    names_from = state,
+    values_from = n    
+)
+testann_wide
+
+annyoy <- as.data.frame(round(testann_wide[2,]/testann_wide[1,]-1,5) * 100)
+annyoy
+```
+
+```{r}
+annyoy_long <- melt(annyoy, id.vars = 'Year')
+annyoy_long <- rename(annyoy_long, state = 'variable', percentage = 'value')
+annyoy_long['Year'] <- rep(2006, 52)
+annyoy_long
+```
+Now we are able to find the states with negative and positive percentage changes.
+```{r}
+# total number of unique states
+total <- unique(annyoy_long$state)
+length(total)
+```
+
+```{r}
+negstates <- subset(annyoy_long, percentage < 0)
+negative <- unique(negstates$state)
+negative
+length(negative)             # 28 states are negative
+```
+
+```{r}
+posstates <- subset(annyoy_long, percentage > 0)
+positive <- unique(posstates$state)
+positive
+length(positive)             # 23 states are positive
+```
+# Part 2 : Negative Growth States
+```{r}
+# We select the states with negative growth listed in negative.
+test <- as.data.frame(ts_monthly)
+testneg <- test[test$state %in% negative,]
+
+# We use dplyr to make it from long to wide
+testneg2 <- testneg %>% 
+  pivot_wider(
+    id_cols = c(Date, Year, Month),
+    names_from = state,
+    values_from = Count
+  )
+testneg2
+
+# We proceed to find the yoy changes, by comparing the months in 2005 and 2006.
+testneg2_05 <- testneg2[1:12, 4:31]
+
+testneg2_06 <- testneg2[13:24, 4:31]
+
+pct_changeneg2 <- round((testneg2_06/testneg2_05 -1),5)*100
+Year <- rep(2006,12)
+Month <- seq(1,12)
+Date <- as.yearmon(paste(Year,Month),"%Y %m")
+
+# Once done, we compile them together to form a new data frame
+pct_changeneg22 <-cbind(Date, pct_changeneg2)
+pct_changeneg22
+#write.csv(pct_changeneg22, 'pct_changeneg2.csv')
+```
+
+### Plot monthly yoy negative
+```{r}
+# We convert it back to long format for plotting
+pct_changeneg2 <-cbind(Date,Year,Month, pct_changeneg2)
+pct_changeneg2
+
+pct_changeneg2_long <- melt(pct_changeneg2, id.vars = c('Date','Year','Month'))
+str(pct_changeneg2_long)
+
+# We tidy up the column names
+pct_changeneg2_long <- pct_changeneg2_long %>% 
+  select(Date, Year, Month, variable, value) %>% 
+  rename(state = 'variable',
+         percentage = 'value')
+pct_changeneg2_long
+```
+
+```{r}
+# We notice that LA stands out from the rest, hence we filter out LA
+pct_changeneg2_long_noLA <- pct_changeneg2_long %>% 
+  filter(state != 'LA')
+
+pct_changeneg2_long_LA <- pct_changeneg2_long %>% 
+  filter(state == 'LA')
+ 
+nega_growth_plot <- ggplot() + 
+  geom_line(data = pct_changeneg2_long_noLA,
+            aes(x = Date, y = percentage, group = state),
+            color = 'light blue') +
+  geom_line(data = pct_changeneg2_long_LA,
+            aes(x = Date, y = percentage),
+            color = 'red') +
+  labs(title = 'Year over Year, % (Negative Growth States)',
+       y = 'Percentage', 
+       x = 'Date') +
+  theme(legend.position = "none") +
+  theme_classic()
+nega_growth_plot
+```
+
+
+# Part 3 : Positive Growth States
+```{r}
+# We select the states with positive growth listed in positive.
+testpos <- test[test$state %in% positive ,]
+
+# We use dplyr to make it from long to wide
+testpos2 <- testpos %>% 
+  pivot_wider(
+    id_cols = c(Date, Year, Month),
+    names_from = state,
+    values_from = Count
+  )
+testpos2
+
+# We proceed to find the yoy changes, by comparing the months in 2005 and 2006.
+testpos2_05 <- testpos2[1:12, 4:26]
+
+testpos2_06 <- testpos2[13:24, 4:26]
+
+pct_changepos2 <- round((testpos2_06/testpos2_05 -1),5)*100
+Year <- rep(2006,12)
+Month <- seq(1,12)
+Date <- as.yearmon(paste(Year,Month),"%Y %m")
+
+# Once done, we compile them together to form a new data frame
+pct_changepos22 <-cbind(Date, pct_changepos2)
+pct_changepos22
+
+#write.csv(pct_changepos22, 'pct_changepos2.csv')
+```
+### Plot monthly yoy positive
+```{r}
+# Likewise we change the format to long
+pct_changepos2 <-cbind(Date, Year, Month, pct_changepos2)
+pct_changepos2
+
+pct_changepos2_long <- melt(pct_changepos2, id.vars = c('Date','Year','Month'))
+pct_changepos2_long$Date<-as.yearmon(paste(pct_changepos2_long$Year,
+                                           pct_changepos2_long$Month),"%Y %m")
+str(pct_changepos2_long)
+
+# Tidying up the column names
+pct_changepos2_long <- pct_changepos2_long %>% 
+  select(Date, Year, Month, variable, value) %>% 
+  rename(state = 'variable',
+         percentage = 'value')
+pct_changepos2_long
+```
+
+```{r}
+# We notice that HI stands out from the other states
+pct_changepos2_long_noHI <- pct_changepos2_long %>% 
+  filter(state != 'HI')
+
+pct_changepos2_long_HI <- pct_changepos2_long %>% 
+  filter(state == 'HI')
+
+
+pos_growth_plot <- ggplot() + 
+  geom_line(data = pct_changepos2_long_noHI,
+            aes(x = Date, y = percentage, group = state),
+            color = 'light blue') +
+  geom_line(data = pct_changepos2_long_HI,
+            aes(x = Date, y = percentage),
+            color = 'red') +
+  labs(title = 'Year over Year, % (Positive Growth States)',
+       y = 'Percentage', 
+       x = 'Date') +
+  theme(legend.position = "none") +
+  theme_classic()
+pos_growth_plot
+```
+
+```{r}
+# Disconnecting from db
+dbDisconnect(conn)
+```
